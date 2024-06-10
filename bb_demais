@@ -1,0 +1,313 @@
+import pandas as pd
+import os
+import datetime
+import warnings
+import string
+
+warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
+
+# Mapeamento pasta e importação do arquivo
+origem = r'C://projetos//bb_demais//processar//'
+destino = r'C://projetos//bb_demais//processado//'
+
+if not os.path.exists(origem):
+    os.makedirs(origem)
+if not os.path.exists(destino):
+    os.makedirs(destino)
+
+dt_atual = datetime.datetime.now()
+arquivos = os.listdir(origem)
+auto_re = []
+demais_p = []
+
+for arquivo in arquivos:
+    lista_arq = os.path.join(origem, arquivo)
+    df = pd.read_excel(lista_arq)
+
+    if 'AUTO_RE' in arquivo:
+        auto_re.append(df)
+        nm_auto_ep = arquivo
+    elif 'TB_REGUA_DEMAIS-PARCELAS' in arquivo:
+        demais_p.append(df)
+        nm_demais_p = arquivo
+
+df_auto_re = pd.concat(auto_re, ignore_index=True)
+df_demais_p = pd.concat(demais_p, ignore_index=True)
+
+# Inicio tratar base
+df_demais_p['CPF'] = df_demais_p['CPF'].astype(str)
+df_demais_p['CPF2'] = df_demais_p['CPF'].astype(str)
+df_demais_p['APOLICE'] = df_demais_p['APOLICE'].astype(str)
+df_demais_p['APOLICE2'] = df_demais_p['APOLICE'].astype(str)
+df_demais_p['VALOR'] = df_demais_p['VALOR'].astype(str)
+df_demais_p['LINHA_DIGITAVEL'] = df_demais_p['LINHA_DIGITAVEL'].astype(str).replace('nan', '')
+df_demais_p['ATRASO'] = (dt_atual - df_demais_p['VENCIMENTO']).dt.days
+df_demais_p['VENCIMENTO'] = df_demais_p['VENCIMENTO'].dt.strftime('%d/%m/%Y')
+df_demais_p['PRODUTO2'] = 'AUTO'
+
+
+def tratar_celular(cel):
+    try:
+        return int(cel)
+    except (ValueError, TypeError):
+        return 0
+
+
+df_demais_p['CEL SEGURADO2'] = df_demais_p['CEL SEGURADO'].replace('0', '')
+df_demais_p['NUM_CARACT'] = df_demais_p.apply(lambda x: len(x['CEL SEGURADO2']), axis=1)
+df_demais_p['NOME SEGURADO'] = df_demais_p['NOME SEGURADO'].astype(str)
+df_demais_p['NOME'] = df_demais_p.apply(lambda x: x['NOME SEGURADO'].split(' ')[0], axis=1)
+df_demais_p['P_LETRA_ALFA'] = df_demais_p['NOME SEGURADO'].apply(lambda x: x[0].isalpha() if x else False)
+df_demais_p['CHAVE'] = df_demais_p['APOLICE'] + df_demais_p['PARCELA'].astype(str)
+df_demais_p['PARCELA2'] = df_demais_p['PARCELA'].astype('Int64')
+
+# Auto RE
+df_auto_re['APOLICE'] = df_auto_re['APOLICE'].astype(str)
+df_auto_re['CHAVE'] = df_auto_re['CHAVE'].astype(str)
+df_auto_re['DDD_RE'] = df_auto_re['DDD_DO_CORRETOR'].replace('-', '0')
+df_auto_re['DDD_RE'] = df_auto_re['DDD_RE'].fillna(0).astype(int).astype(str)
+df_auto_re['DDD_RE'] = df_auto_re['DDD_RE'].replace('0', '')
+df_auto_re['TEL COMPLETO2'] = df_auto_re['TELEFONE_DO_CORRETOR'].replace('-', '').replace(')', '')
+
+
+def limpar_e_converter(value):
+    limpar_valore = ''.join(filter(str.isdigit, str(value)))
+    return pd.to_numeric(limpar_valore, errors='coerce')
+
+
+df_auto_re['TEL COMPLETO2'] = df_auto_re['TEL COMPLETO2'].apply(limpar_e_converter)
+df_auto_re['TEL COMPLETO2'] = df_auto_re['TEL COMPLETO2'].fillna(0).astype('Int64').astype(str)
+df_auto_re['TEL COMPLETO2'] = '55' + df_auto_re['DDD_RE'] + df_auto_re['TEL COMPLETO2']
+df_auto_re['CPF'] = df_auto_re['DOC_TOMADOR'].astype(str)
+df_auto_re['CHAVE'] = df_auto_re['CHAVE'].astype(str)
+
+df_auto_re_unique = df_auto_re.drop_duplicates(subset='CPF', keep='first')
+merge_df = df_demais_p.merge(df_auto_re_unique, on='CPF', how='left')
+
+merge_df['TEL_VALIDO'] = merge_df['CEL SEGURADO2'] == merge_df['TEL COMPLETO2'] if True else False
+# Fim tratar base
+
+
+# Mapear colunas
+mapear_boleto = {'CPF': 'ID',
+                 'CEL SEGURADO': 'TELEFONE',
+                 'NOME SEGURADO': 'NOME',
+                 'CPF2': 'cpf',
+                 'NOME': 'primeiro_nome',
+                 'PARCELA2': 'numero_parcela',
+                 'PRODUTO2': 'produto',
+                 'VENCIMENTO': 'data',
+                 'APOLICE2': 'numero_apolice',
+                 'VALOR': 'VALOR',
+                 'LINHA_DIGITAVEL': 'linha_digitavel',
+                 }
+
+mapear_debito = {'CPF': 'ID',
+                 'CEL SEGURADO': 'TELEFONE',
+                 'NOME SEGURADO': 'NOME',
+                 'CPF2': 'cpf',
+                 'NOME': 'primeiro_nome',
+                 'PARCELA2': 'numero_parcela',
+                 'PRODUTO2': 'produto',
+                 'VENCIMENTO': 'data',
+                 'APOLICE2': 'numero_apolice',
+                 'VALOR': 'VALOR',
+                 }
+
+mapear_higienizado = {
+    'CPF': 'CPF',
+    'APOLICE2': 'APOLICE',
+    'PARCELA2': 'PARCELA',
+    'E-MAIL SEGURADO': 'E-MAIL SEGURADO',
+    'CEL SEGURADO': 'CEL SEGURADO',
+    'NOME SEGURADO': 'NOME SEGURADO',
+    'PRODUTO_x': 'PRODUTO_x',
+    'CANAL': 'CANAL',
+    'E-MAIL DO CORRETOR': 'E-MAIL DO CORRETOR',
+    'NOME_CORRETOR_x': 'NOME_CORRETOR_x',
+    'FORMA_DE_PAGAMENTO': 'FORMA_DE_PAGAMENTO',
+    'LINHA_DIGITAVEL': 'LINHA_DIGITAVEL',
+    'VALOR': 'VALOR',
+    'VENCIMENTO': 'VENCIMENTO',
+    'CPF2': 'CPF2',
+    'ATRASO': 'ATRASO',
+    'PRODUTO2': 'PRODUTO',
+    'CEL SEGURADO2': 'CEL SEGURADO',
+    'NUM_CARACT': 'NUM_CARACT',
+    'NOME': 'NOME',
+    'P_LETRA_ALFA': 'P_LETRA_ALFA',
+    'CHAVE_x': 'CHAVE_x',
+}
+
+mapear_re = {'RAMO': 'RAMO',
+             'PRODUTO': 'PRODUTO',
+             'APOLICE': 'APOLICE',
+             'ENDOSSO': 'ENDOSSO',
+             'PARCELA': 'PARCELA',
+             'ITF_SAPXLEGADO': 'ITF_SAPXLEGADO',
+             'TP_BAIXA': 'TP_BAIXA',
+             'MTV_COMPENSACAO': 'MTV_COMPENSACAO',
+             'EMISSAO_ONLINE': 'EMISSAO_ONLINE',
+             'DT_PROPOSTA': 'DT_PROPOSTA',
+             'DT_RECEPCAO': 'DT_RECEPCAO',
+             'NN_LIN_DIGIQY': 'NN_LIN_DIGIQY',
+             'NN': 'NN',
+             'QTD_TOTAL_PARCELAS': 'QTD_TOTAL_PARCELAS',
+             'COD_PLANO_PAGAMENTO': 'COD_PLANO_PAGAMENTO',
+             'PLANO_PAGAMENTO': 'PLANO_PAGAMENTO',
+             'SITUACAO': 'SITUACAO',
+             'TIPO': 'TIPO',
+             'TIPO_DESCRICAO': 'TIPO_DESCRICAO',
+             'MCA_PROVISIONAL': 'MCA_PROVISIONAL',
+             'DT_VENCTO_88': 'DT_VENCTO_88',
+             'DT_EMISSAO': 'DT_EMISSAO',
+             'USER_EMISSAO': 'USER_EMISSAO',
+             'VIGENCIA_INICIO': 'VIGENCIA_INICIO',
+             'VIGENCIA_FIM': 'VIGENCIA_FIM',
+             'VL_PARCELA': 'VL_PARCELA',
+             'VENCTO_PARCELA': 'VENCTO_PARCELA',
+             'CORRETOR': 'CORRETOR',
+             'NOME_CORRETOR': 'NOME_CORRETOR',
+             'DDD_DO_CORRETOR': 'DDD_DO_CORRETOR',
+             'TELEFONE_DO_CORRETOR': 'TELEFONE_DO_CORRETOR',
+             'E_MAIL_DO_CORRETOR': 'E_MAIL_DO_CORRETOR',
+             'NOME_TOMADOR': 'NOME_TOMADOR',
+             'E_MAIL1_DO_TOMADOR': 'E_MAIL1_DO_TOMADOR',
+             'E_MAIL2_DO_TOMADOR': 'E_MAIL2_DO_TOMADOR',
+             'DDD_DO_TOMADOR': 'DDD_DO_TOMADOR',
+             'TELEFONE_DO_TOMADOR': 'TELEFONE_DO_TOMADOR',
+             'TIP_DOC_TOMADOR': 'TIP_DOC_TOMADOR',
+             'DOC_TOMADOR': 'DOC_TOMADOR',
+             'QTD_REPROGRAMACOES': 'QTD_REPROGRAMACOES',
+             'DT_VENCTO_REPROG': 'DT_VENCTO_REPROG',
+             'VL_REPROG': 'VL_REPROG',
+             'NN_REPROG': 'NN_REPROG',
+             'TIPO_REPROG': 'TIPO_REPROG',
+             'LINHA_DIGITAVEL_REPROG': 'LINHA_DIGITAVEL_REPROG',
+             'BANCO': 'BANCO',
+             'CD_RET_BANCO': 'CD_RET_BANCO',
+             'DEBITO_ENVIADO_AO_BANCO': 'DEBITO_ENVIADO_AO_BANCO',
+             'QTD_DIAS_EM_ABERTO': 'QTD_DIAS_EM_ABERTO',
+             'TIPOLOGIA': 'TIPOLOGIA',
+             'QTD_REPIQUES': 'QTD_REPIQUES',
+             'DATA_CARGA': 'DATA_CARGA',
+             'NUM_SINI': 'NUM_SINI',
+             'SINISTRO': 'SINISTRO',
+             'FEC_TERM_SINI': 'FEC_TERM_SINI',
+             'FEC_REAP_SINI': 'FEC_REAP_SINI',
+             'CANAL_DISTRIBUIDOR': 'CANAL_DISTRIBUIDOR',
+             'CHAVE': 'CHAVE',
+             'DG': 'DG',
+             'MENOR_2': 'MENOR_2',
+             'SAP': 'SAP',
+             'BV': 'BV',
+             'ITURAN': 'ITURAN',
+             'CARTAO': 'CARTAO',
+             'OP': 'OP',
+             'MENOR25': 'MENOR25',
+             'SICRED': 'SICRED',
+             'SANTANDER': 'SANTANDER',
+             'STATUS': 'STATUS',
+             'EXCLUDENTE': 'EXCLUDENTE',
+             'VISAO': 'VISAO',
+             'SINISTRO_FINAL': 'SINISTRO_FINAL',
+             'CANAL_CONSOLIDADO': 'CANAL_CONSOLIDADO',
+             }
+
+# ##### INICIO FILTRO
+# BOLETO -5
+ba_atraso_5 = merge_df[(merge_df['NUM_CARACT'] == 13)
+                       & (merge_df['FORMA_DE_PAGAMENTO'] == 'BA')
+                       & (merge_df['ATRASO'] == -5)
+                       & (merge_df['LINHA_DIGITAVEL'] != '')
+                       & (merge_df['P_LETRA_ALFA'] == True)
+                       & (merge_df['TEL_VALIDO'] == False)
+                       ]
+
+# BOLETO 0
+ba_atraso_0 = merge_df[(merge_df['NUM_CARACT'] == 13)
+                       & (merge_df['FORMA_DE_PAGAMENTO'] == 'BA')
+                       & (merge_df['ATRASO'] == 0)
+                       & (merge_df['LINHA_DIGITAVEL'] != '')
+                       & (merge_df['P_LETRA_ALFA'] == True)
+                       & (merge_df['TEL_VALIDO'] == False)
+                       ]
+
+# BOLETO 20
+ba_atraso_20 = merge_df[(merge_df['NUM_CARACT'] == 13)
+                        & (merge_df['FORMA_DE_PAGAMENTO'] == 'BA')
+                        & (merge_df['ATRASO'] == 20)
+                        & (merge_df['LINHA_DIGITAVEL'] != '')
+                        & (merge_df['P_LETRA_ALFA'] == True)
+                        & (merge_df['TEL_VALIDO'] == False)
+                        ]
+# DEBITO -5
+db_atraso_5 = merge_df[(merge_df['NUM_CARACT'] == 13)
+                       & ((merge_df['FORMA_DE_PAGAMENTO'] == 'DB') | (merge_df['FORMA_DE_PAGAMENTO'] == 'DC'))
+                       & (merge_df['ATRASO'] == -5)
+                       & (merge_df['P_LETRA_ALFA'] == True)
+                       & (merge_df['TEL_VALIDO'] == False)
+                       ]
+# DEBITO 0
+db_atraso_0 = merge_df[(merge_df['NUM_CARACT'] == 13)
+                       & ((merge_df['FORMA_DE_PAGAMENTO'] == 'DB') | (merge_df['FORMA_DE_PAGAMENTO'] == 'DC'))
+                       & (merge_df['ATRASO'] == 0)
+                       & (merge_df['P_LETRA_ALFA'] == True)
+                       & (merge_df['TEL_VALIDO'] == False)
+                       ]
+# DEBITO 9
+db_atraso_9 = merge_df[(merge_df['NUM_CARACT'] == 13)
+                       & ((merge_df['FORMA_DE_PAGAMENTO'] == 'DB') | (merge_df['FORMA_DE_PAGAMENTO'] == 'DC'))
+                       & (merge_df['ATRASO'] == 9)
+                       & (merge_df['P_LETRA_ALFA'] == True)
+                       & (merge_df['TEL_VALIDO'] == False)
+                       ]
+# DEBITO 19
+db_atraso_19 = merge_df[(merge_df['NUM_CARACT'] == 13)
+                        & ((merge_df['FORMA_DE_PAGAMENTO'] == 'DB') | (merge_df['FORMA_DE_PAGAMENTO'] == 'DC'))
+                        & (merge_df['ATRASO'] == 19)
+                        & (merge_df['P_LETRA_ALFA'] == True)
+                        & (merge_df['TEL_VALIDO'] == False)
+                        ]
+
+##### FIM FILTRO
+
+df_higienizado = pd.concat([ba_atraso_5, ba_atraso_0, ba_atraso_20,
+                            db_atraso_5, db_atraso_0, db_atraso_9, db_atraso_19], axis=0)
+
+df_higienizado = df_higienizado.rename(columns=mapear_higienizado)[list(mapear_higienizado.values())]
+
+df_higienizado.to_excel(f'{destino}HIGIENIZADO_{nm_demais_p.split("_")[3]}', index=False)
+
+# ##### INICIO EXPORTAÇÃO
+# BOLETO -5
+ba_atraso_5 = ba_atraso_5.rename(columns=mapear_boleto)[list(mapear_boleto.values())]
+ba_atraso_5.to_excel(f'{destino}AUTO_DEMAIS_BA_D-05_{nm_demais_p.split("_")[3]}', index=False)
+
+# BOLETO 0
+ba_atraso_0 = ba_atraso_0.rename(columns=mapear_boleto)[list(mapear_boleto.values())]
+ba_atraso_0.to_excel(f'{destino}AUTO_DEMAIS_BA_D00_{nm_demais_p.split("_")[3]}', index=False)
+
+# BOLETO 20
+ba_atraso_20 = ba_atraso_20.rename(columns=mapear_boleto)[list(mapear_boleto.values())]
+ba_atraso_20.to_excel(f'{destino}AUTO_DEMAIS_BA_D20_{nm_demais_p.split("_")[3]}', index=False)
+
+# DEBITO -5
+db_atraso_5 = db_atraso_5.rename(columns=mapear_debito)[list(mapear_debito.values())]
+db_atraso_5.to_excel(f'{destino}AUTO_DEMAIS_DB_D-05_{nm_demais_p.split("_")[3]}', index=False)
+
+# DEBITO 0
+db_atraso_0 = db_atraso_0.rename(columns=mapear_debito)[list(mapear_debito.values())]
+db_atraso_0.to_excel(f'{destino}AUTO_DEMAIS_DB_D00_{nm_demais_p.split("_")[3]}', index=False)
+
+# DEBITO 9
+db_atraso_9 = db_atraso_9.rename(columns=mapear_debito)[list(mapear_debito.values())]
+db_atraso_9.to_excel(f'{destino}AUTO_DEMAIS_DB_D09_{nm_demais_p.split("_")[3]}', index=False)
+
+# DEBITO 19
+db_atraso_19 = db_atraso_19.rename(columns=mapear_debito)[list(mapear_debito.values())]
+db_atraso_19.to_excel(f'{destino}AUTO_DEMAIS_DB_D19_{nm_demais_p.split("_")[3]}', index=False)
+print('Extração FINALIZADA!')
+dt_fim = datetime.datetime.now()
+print(f'Tempo de execução: {dt_fim - dt_atual}')
+##### FIM EXTRAÇÃO
